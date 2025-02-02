@@ -1,0 +1,560 @@
+---
+title: "Project 2 Econ 104"
+author: "Kirsten Morris, Nicholas Arthuzi, Khanh Vy Ho, 
+Gulin Arikan, Dhrumil Kharva"
+date: "`r Sys.Date()`"
+output: pdf_document
+css: styles.css
+urlcolor: blue
+---
+
+```{r echo = TRUE}
+library("tidyverse")
+microsoftdata <- read.csv("Microsoft_Stock.csv")
+head(microsoftdata)
+summary(microsoftdata)
+
+str(microsoftdata)
+sum(is.na(microsoftdata))
+
+microsoftdata$Date <- as.POSIXct(microsoftdata$Date, 
+                                 format = "%m/%d/%Y %H:%M:%S")
+microsoftdata$Open <- as.numeric(microsoftdata$Open)
+microsoftdata$High <- as.numeric(microsoftdata$High)
+microsoftdata$Low <- as.numeric(microsoftdata$Low)
+microsoftdata$Close <- as.numeric(microsoftdata$Close)
+microsoftdata$Volume <- as.numeric(microsoftdata$Volume)
+sum(is.na(microsoftdata))
+microsoftdata_cleaned <- microsoftdata %>% distinct()
+
+# Create column "Net Price" as the difference from Close and Open and column "Week"
+first_day <- make_date(2015,04,01)
+weekly_microsoft_data <- microsoftdata_cleaned|>
+  mutate(week = floor(difftime(Date, first_day, units = "weeks")))|>
+  group_by(week)|>
+  summarize(mean_volume = mean(Volume), open_price = first(Open), close_price = last(Close), 
+            date = first(Date), .groups = "drop")|>
+  mutate(net_price = close_price - open_price)|>
+  select(c(week, date, net_price, mean_volume))
+```
+
+# Part 1 - Time Series and Autocorrelation
+
+## Question 1 -  Exploratory Data Analysis
+
+### (a) The question of the project
+- The project aims at answering the hypothesis: "Can weekly mean volume and weekly past net price affect weekly current net price of Microsoft stock? (from 2015/04/01 to 2021/03/31)".
+- Initial hypothesis: "Past volume is positively associated with current net price while past net price is negatively associated with current net price".
+
+### (b) Data citation and summary
+[Venkitesh, Vijay V. “Microsoft Stock- Time Series Analysis.” 
+2021, Accessed 10 Nov. 2024.](https://www.kaggle.com/datasets/vijayvvenkitesh/microsoft-stock-time-series-analysis?resource=download)
+
+- microsoftdata was directly imported from Kaggle. This dataset is about the stock price of Microsoft from 2015/04/01 to 2021/03/31. This dataset has 1511 observations of 6 variables. These variables include Date, Open, High, Low, Close, and Volume. 
+
+- weekly_microsoft_data is the dataset we will use to analyze. The original dataset provides daily data, which gives non-stationary results. We convert into weekly data for stationary. This dataset has 314 observations of 4 variables. These variables include Week (week), Date (date), Net Price (net_price), and Mean Volume (mean_volume).
+
+### (c) Data completeness
+There is no missing observations.
+
+### (d) Descriptive analysis
+
+#### Net Price 
+
+```{r Summary and Standard Deviation of Net Price}
+summary(weekly_microsoft_data$net_price)
+sd(weekly_microsoft_data$net_price)
+```
+
+```{r Histogram for Net Price}
+ggplot(data = weekly_microsoft_data, aes(x = net_price)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mean(weekly_microsoft_data$net_price), 
+                                         sd = sd(weekly_microsoft_data$net_price)), 
+                color = "red", size = 1) +
+  labs(title = "Histogram with Normal Fit for Net Price", x = "Net Price", y = "Density") +
+  theme_minimal()
+```
+
+Comment: 
+
+- Distribution: The distribution appears to be right-skewed, as the mean (0.5271) is greater than the median (0.4250). Most of the values are clustered around the center near zero, but there are a few extreme positive values that extend the tail to the right. This long tail to the right suggests that there are some weeks where significant increases in net price occurred. This could reflect occasional periods of strong price gains.
+
+- Central tendency: Most data points are concentrated near zero, indicating that most net price changes are relatively small.
+
+- Dispersion: A high standard deviation (4.090609) compared to the mean implies that the net price is quite volatile, with some weeks showing substantial price changes.  
+
+```{r Boxplot for Net Price}
+ggplot(data = weekly_microsoft_data, aes(y = net_price)) + 
+  geom_boxplot() + 
+  labs(title = "Boxplot of Net Price", y = "Values") +
+  theme_minimal()
+```
+Comment:
+
+- The boxplot indicates that most of the net price changes are small, but there are some weeks with extreme values.
+
+- The box represents the interquartile range (IQR), which covers the middle 50% of the data. The relatively narrow box indicates that most net price changes are close to the median.
+
+#### Mean Volume
+
+```{r Summary and Standard Deviation of Mean Volume}
+summary(weekly_microsoft_data$mean_volume)
+sd(weekly_microsoft_data$mean_volume)
+```
+
+```{r Histogram for Mean Volume}
+ggplot(data = weekly_microsoft_data, aes(x = mean_volume)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mean(weekly_microsoft_data$mean_volume), 
+                                         sd = sd(weekly_microsoft_data$mean_volume)), 
+                color = "red", size = 1) +
+  labs(title = "Histogram with Normal Fit for Mean Volume", x = "Mean Volume", y = "Density") +
+  theme_minimal()
+```
+
+Comment:
+
+- Distribution: The distribution appears to be heavily right-skewed, as the mean (30102903) is greater than the median (27709696). Most of the data points are concentrated on the left, with a long tail extending to the right. This indicates that while most trading volumes are relatively lower, there are some instances where the mean trading volume is very high.
+
+- Central tendency: Most data points are concentrated around 2e+07 to 3e+07, indicating a degree of stability/consistency in the market's trading behavior, except for those weeks where volumes are exceptionally high.
+
+- Dispersion: A high standard deviation (11375327) in mean volume implies that there is significant variability in weekly trading volumes.
+
+```{r Boxplot for Mean Volume}
+ggplot(data = weekly_microsoft_data, aes(y = mean_volume)) + 
+  geom_boxplot() + 
+  labs(title = "Boxplot of Mean Volume", y = "Values") +
+  theme_minimal()
+```
+
+Comment:
+
+- Most weekly mean volume ranges from 20 million to 40 million shares per day. 
+
+- There is no abnormal value (<0).
+
+#### Cross Correlation
+
+```{r correlation between outcome net_price and lag of mean_volume}
+# Extract the columns as numeric vectors
+net_price <- weekly_microsoft_data$net_price
+mean_volume <- weekly_microsoft_data$mean_volume
+
+# Compute the cross-correlation
+ccf_result <- ccf(mean_volume, net_price, lag.max = 20, plot = TRUE)
+```
+
+Comment: 
+
+- The cross correlation shows how weekly net prices are correlated with the lags of weekly mean trading volume.
+
+- The plot suggests that current net prices ($y_t$) are significantly correlated with the mean trading volume of thee last 2 weeks ($x_{t-1}$ and $x_{t-2}$).
+
+```{r correlation between outcome net_price and lag of itself}
+ccf_result <- ccf(net_price, net_price, lag.max = 20, plot = TRUE)
+```
+
+Comment:
+
+- The cross correlation shows how weekly net prices are correlated with the lags of itself.
+
+- The plot suggests that current net prices ($y_t$) are significantly correlated with net prices from 3 and 5 weeks earlier ($y_{t-3}$ and $y_{t-5}$).
+
+## Question 2 - Data PreProcessing
+
+```{r Stationary for Weekly Net Price}
+library(forecast)
+library(urca)
+library(tidyverse)
+
+ts_netprice <- ts(weekly_microsoft_data$net_price, start = c(2015,04,01), frequency = 52)
+ts_weekly_microsoft_data <- ts(weekly_microsoft_data, start = c(2015,04,01), frequency = 52)
+
+# Plot the time series, ACF, and PACF for the Weekly Net Price to assess stationary visually
+tsdisplay(ts_netprice, main = "Time Series Analysis for Weekly Net Price")
+
+# Run the Augmented Dickey-Fuller (ADF) test on the time series data
+adf_test <- ur.df(ts_netprice, type = "drift", selectlags = "AIC")
+
+# Print the ADF test summary
+print(summary(adf_test))
+```
+
+Comment:
+
+- The value of test-statistics is -13.597, which is much lower than all the critical values at the 1%, 5%, and 10% significance levels. Therefore, we reject the null hypothesis that the time-series data is non-stationary.
+
+```{r Stationary for Weekly Trading Volume}
+ts_mean_volume <- ts(weekly_microsoft_data$mean_volume, start = c(2015,04,01), frequency = 52)
+
+# Plot the time series, ACF, and PACF for the Weekly Trading Volume to assess stationary visually
+tsdisplay(ts_mean_volume, main = "Time Series Analysis for Weekly Trading Volume")
+
+# Run the Augmented Dickey-Fuller (ADF) test on the time series data
+adf_test <- ur.df(ts_mean_volume, type = "drift", selectlags = "AIC")
+
+# Print the ADF test summary
+print(summary(adf_test))
+```
+
+Comment:
+
+- The value of test-statistics is -6.7254, which is much lower than all the critical values at the 1%, 5%, and 10% significance levels. Therefore, we reject the null hypothesis that the time-series data is non-stationary.
+
+## Question 3 - Feature Generation, Model Testing, and Forecasting
+
+### (a) AR Model
+
+According to PACF in Question 2a, we can see the cut off at 25, which is a hint that this is the order of our AR model. 
+
+```{r}
+library(dynlm)
+#Numerically selecting the best model
+SC <- 999999999
+results <- matrix("", nrow = 25, ncol = 1)
+
+#looping over regressions and choosing the best
+for (i in 1:25) {
+mdl <- dynlm(net_price ~ L(net_price, 1:i), data = ts_weekly_microsoft_data)
+N <- nobs(mdl)
+
+#Schwarz Criterion :
+SC_new <- log(sum(mdl$residuals^2)/N) + (3+i)*log(N)/N
+if (SC_new< SC) {
+save_i <- i
+SC <- SC_new
+}
+results[i,1] <- SC_new
+}
+numeric_results <- matrix(as.numeric(as.matrix(results)), nrow = nrow(results))
+round(numeric_results, 3)
+```
+
+Comment: 
+
+- AR(1) is the best model that has the lowest SC (BIC), but we choose AR(5) to avoid the serial correlation while maintaining the similar SC to AR(1).
+
+```{r Best model AR(5)}
+mdl_best <- dynlm(net_price ~ L(net_price, 1:5), data = ts_weekly_microsoft_data)
+summary(mdl_best)
+```
+
+### (b) Serial Correlation Test for AR Model
+
+```{r ACF of residual and the AR chosen model}
+library(lmtest)
+acf(mdl_best$residuals)
+```
+
+Comment: 
+
+- The first 8 lags are not significant, but the 9th lag shows significant different than 0 at the 5% level. We are going to use Breush Godfrey Test to check the existence of the autocorrelation.
+
+```{r Breush Godfrey Test for AR}
+bgtest(mdl_best, order = 9)
+```
+
+Comment:
+
+- p-value (0.2043) > 0.05 fails to reject the null that errors are uncorrelated. We conclude that there is no significant evidence of serial correlation (autocorrelation).
+
+### (c) ARDL Model
+
+According to the cross correlation between outcome net_price and lag of mean_volume in Question 1d, ACF cuts off at 2, which is a hint that this is the highest suitable value of q for the ARDL model. Besides, based on the result of question 3b, the highest suitable value of p for our ARDL model is 5.
+
+```{r}
+#initializing parameters
+SC <- 999999999
+results <- matrix("", nrow = 5, ncol = 2)
+#looping over regressions and choosing the best
+for (i in 1:5) {
+for (j in 1:2) {
+mdl <- dynlm(net_price ~ L(net_price, 1:i)+L(mean_volume, 1:j), data = ts_weekly_microsoft_data)
+N <- nobs(mdl)
+#Schwarz Criterion :
+SC_new <- log(sum(mdl$residuals^2)/N) + (3+i+j)*log(N)/N
+if (SC_new< SC) {
+save_i <- i
+save_j <- j
+SC <- SC_new
+}
+results[i,j] <- SC_new
+}
+}
+numeric_results <- matrix(as.numeric(as.matrix(results)), nrow = nrow(results))
+round(numeric_results, 3)
+```
+
+Comment: 
+
+- ARDL(5,2) is the best model that has the lowest SC (BIC) value. 
+
+```{r Best model ARDL(5,2)}
+ARDL_best <- dynlm(net_price ~ L(net_price, 1:5) + L(mean_volume, 1:2), 
+                   data = ts_weekly_microsoft_data)
+summary(ARDL_best)
+```
+
+```{r ACF of residual and the ARDL chosen model}
+acf(ARDL_best$residuals)
+```
+
+Comment:
+
+- The first 8 lags are not significant, but the 9th lag shows significant different than 0 at the 5% level. We are going to use Breush Godfrey Test to check the existence of the autocorrelation.
+
+```{r Breush Godfrey Test for ARDL}
+bgtest(ARDL_best, order = 9)
+```
+
+Comment:
+- p-value (0.2123) > 0.05 fails to reject the null that errors are uncorrelated. We conclude that there is no significant evidence of serial correlation.
+
+## Question 4 - AIC Test for AR(5) and ARDL(5,2) to select the best one
+
+```{r AIC for AR(5)}
+# Fit the AR(5) model using dynlm
+mdl_best <- dynlm(net_price ~ L(net_price, 1:5), data = ts_weekly_microsoft_data)
+
+# Calculate the AIC value
+ar_aic_value <- AIC(mdl_best)
+print(ar_aic_value)
+```
+
+```{r AIC for ARDL(5,2)}
+# Fit the ARDL(5,2) model using dynlm
+ARDL_best <- dynlm(net_price ~ L(net_price, 1:5) + L(mean_volume, 1:2), 
+                   data = ts_weekly_microsoft_data)
+
+# Calculate the AIC value
+ardl_aic_value <- AIC(ARDL_best)
+print(ardl_aic_value)
+```
+
+```{r Summary of AR(5) model}
+summary(mdl_best)
+```
+
+Comment:
+
+- AR(5) has lower AIC value (1736.309 < 1739.157), indicating the better fit model.
+
+- Besides, looking that the summary of AR(5) model, the coefficients of lag 1, 3, and 5 are significant. This implies that the weekly net prices of 1, 3, and 5 weeks ago are negatively associated with the current weekly net price of Microsoft stock. 
+
+- Coming back to our question and intial hypothesis. Yes, the time-series dataset can help us explore the question "Can weekly mean volume and weekly past net price affect weekly current net price of Microsoft stock?". Regarding our initial hypothesis, ARDL(5,2) shows us past volume is not significantly associated with current net price. Specifically, the coefficient of lag 1 has insignificant negative effect (-2.295e-08) and lag 2 has insignificant positive effect (1.115e-09). However, our hypothesis about past net price is negatively associated with current net price is supported by the results from both AR(5) and ARDL(5,2) models (explained above).
+
+## Question 5 - Limitations and Improvements
+
+- Stationarity Constraints (limitation): The data was transformed to weekly observations to address non-stationarity concerns, which might have caused loss of information.
+
+- Stationarity Constraints (improvement): To improve robustness, additional stationarity checks like further differencing could ensure the time series is optimal for this analysis.
+
+- Reverse Causality Considerations (issue): The analysis assumes that trading volumes influence weekly price changes. However, there could be reverse causality where weekly price changes affect trading volumes.
+
+- Reverse Causality Considerations (improvement): A Granger causality test could assess if lagged price changes significantly predict trading volume or vice versa. 
+
+# Part 2 - QDV Models
+
+```{r import dataset}
+library(readxl)
+netflix_dataset <- read.csv("/Users/khanhvyho/Downloads/Netflix Userbase.csv")
+```
+
+```{r clean dataset}
+library(dplyr)
+library(lubridate)
+
+cleaned_netflix <- netflix_dataset|>
+  mutate(premium = ifelse(Subscription.Type == "Premium", 1, 0))|>
+  mutate(country = ifelse(Country == "United States", "US", "Others"))|>
+  mutate(join_year = year(dmy(Join.Date)))|>
+  select(c(join_year, country, premium, Age, Gender, Device))
+```
+
+## Question 1 - Briefly discuss data the question
+
+### Project question
+
+- The project aims to answering the question: "How do Age, Gender, Type of Device, and Region (US vs. Others) affect the probability of registering Netflix premium account from 2021 to 2023?". 
+
+- Initial hypothesis: "Older people is less likely to register Netflix premium account".
+
+- Dependent variable is categorical Premium (premium). 5 predictors are Join Year (join_year), Country (country), Age (Age), Gender (Gender), and Device (Device).
+
+### Data citation and Data summary
+
+["Netflix Userbase Dataset"](https://www.kaggle.com/datasets/arnavsmayan/netflix-userbase-dataset)
+
+- netflix_dataset was directly imported from Kaggle. This datset has 2500 observations of 10 variables. These variables include User.ID, Subscription.Type, Monthly.Revenue, Join.Date, Last.Payment.Date, Country, Age, Gender, Device, and Plan.Duration.
+
+- cleaned_netflix has 2500 observations with 6 variables. These variables include Join Year (join_year), Country (country), Premium (premium), Age (Age), Gender (Gender), and Device (Device). "join_year" is discrete variable. "country" is converted to "US" and "Others". "premium" is binary variable ("premium" is converted to 1, "basic" and "standard" are converted to 0). "Age" is discrete variable. "Gender" is binary variable. "Device" is categorical variable with Laptop as the reference.
+
+## Question 2 - Descriptive Analysis
+
+### Year
+
+```{r Proportion for Year}
+prop.table(table(cleaned_netflix$join_year))
+```
+
+### Country
+
+```{r Proportion for Country}
+prop.table(table(cleaned_netflix$country))
+```
+
+### Premium
+
+```{r Proportion for Premium}
+prop.table(table(cleaned_netflix$premium))
+```
+
+### Age
+
+```{r Histogram of Age}
+library(ggplot2)
+ggplot(data = cleaned_netflix, aes(x = Age)) +
+  geom_histogram(aes(y = ..density..), bins =20, fill = "lightblue", color = "black") +
+  stat_function(fun = dnorm, args = list(mean = mean(cleaned_netflix$Age), 
+                                         sd = sd(cleaned_netflix$Age)), 
+                color = "red", size = 1) +
+  labs(title = "Histogram with Normal Fit for Age", x = "Age", y = "Density") +
+  theme_minimal()
+```
+
+```{r Boxplot of Age}
+ggplot(data = cleaned_netflix, aes(y = Age)) + 
+  geom_boxplot() + 
+  labs(title = "Boxplot of Age", y = "Values") +
+  theme_minimal()
+```
+
+```{r Summary and Standard Deviation of Age}
+summary(cleaned_netflix$Age)
+sd(cleaned_netflix$Age)
+```
+
+Comment:
+
+- Distribution: The distribution appears to be a multi-modal distribution that has multiple peaks, suggesting the presence of multiple subgroups within the data. The normal distribution curve does not align perfectly with the distribution of the bars, indicating the curve may not adequately described the dataset involving participants from different age brackets.
+
+- Dispersion: The dispersion (or spread) of the age data is quite broad, ranging from approximately 25 to 55 years. This indicates a wide variation in ages within the dataset.
+
+- Central tendency: Mean of Age: 38.8 and Median Age: 39.0
+
+### Gender
+
+```{r Proportion for Gender}
+prop.table(table(cleaned_netflix$Gender))
+```
+
+### Device
+
+```{r Proportion for Device}
+prop.table(table(cleaned_netflix$Device))
+```
+
+## Question 3 - Model Fitting
+
+### Linear Probability Model (LPM)
+
+```{r Linear Probability Model}
+lpm <- lm(premium ~ factor(join_year) + country + Age + Gender + Device, data = cleaned_netflix)
+summary(lpm)
+```
+
+```{r Confusion Matrix for LPM}
+library(caret)
+library(pROC)
+
+# Generate predicted probabilities and extract actual class
+predicted_probs_lpm <- predict(lpm)
+actual_classes <- factor(cleaned_netflix$premium, levels = c(1, 0))
+
+# Generate the ROC curve
+roc_curve <- roc(actual_classes, predicted_probs_lpm)
+
+# Find the optimal threshold using ROC
+optimal_threshold <- coords(roc_curve, "best", ret = "threshold")[1,1]
+
+# Classify predictions using the optimal threshold
+predicted_classes_lpm <- ifelse(predicted_probs_lpm > optimal_threshold, 1, 0)
+
+# Convert to factors for confusionMatrix function
+predicted_classes_lpm <- factor(predicted_classes_lpm, levels = c(1, 0))
+
+# Create the confusion matrix
+conf_matrix_lpm <- confusionMatrix(predicted_classes_lpm, actual_classes)
+print(conf_matrix_lpm)
+```
+
+### Probit Model
+
+```{r Probit Model}
+probit_model <- glm(premium ~ factor(join_year) + country + Age + Gender + Device, 
+                    family = binomial(link = "probit"), 
+                    data = cleaned_netflix)
+```
+
+```{r Confusion Matrix for Probit Model}
+# Generate predicted probabilities
+predicted_probs_probit <- predict(probit_model, type = "response")
+
+# Generate the ROC curve
+roc_curve <- roc(actual_classes, predicted_probs_probit)
+
+# Find the optimal threshold using ROC
+optimal_threshold <- coords(roc_curve, "best", ret = "threshold")[1,1]
+
+# Classify predictions using the optimal threshold
+predicted_classes_probit <- ifelse(predicted_probs_probit > optimal_threshold, 1, 0)
+
+# Convert to factors for confusionMatrix function
+predicted_classes_probit <- factor(predicted_classes_probit, levels = c(1, 0))
+
+# Create the confusion matrix
+conf_matrix_probit <- confusionMatrix(predicted_classes_probit, actual_classes)
+print(conf_matrix_probit)
+```
+
+### Logit Model
+
+```{r Logit Model}
+logit_model <- glm(premium ~ factor(join_year) + country + Age + Gender + Device, 
+                    family = binomial(link = "logit"), 
+                    data = cleaned_netflix)
+```
+
+```{r Confusion Matrix for Logit Model}
+# Generate predicted probabilities
+predicted_probs_logit <- predict(logit_model, type = "response")
+
+# Generate the ROC curve
+roc_curve <- roc(actual_classes, predicted_probs_logit)
+
+# Find the optimal threshold using ROC
+optimal_threshold <- coords(roc_curve, "best", ret = "threshold")[1,1]
+
+# Classify predictions using the optimal threshold
+predicted_classes_logit <- ifelse(predicted_probs_logit > optimal_threshold, 1, 0)
+
+# Convert to factors for confusionMatrix function
+predicted_classes_logit <- factor(predicted_classes_logit, levels = c(1, 0))
+
+# Create the confusion matrix
+conf_matrix_logit <- confusionMatrix(predicted_classes_logit, actual_classes)
+print(conf_matrix_logit)
+```
+
+According to the accuracy from 3 models, Logit Model is best fitting model with the highest accuracy (0.5552). It means that 55.52% of total prediction are correct. Besides, the sensitivity tells us that 46.79% actual positives are identified, and specificity shows that 59.14% actual negatives are identified.
+
+### Marginal effects of Logit Model and Conclusion
+
+```{r}
+summary(logit_model)
+```
+
+- Age's coefficient = -0.007754.
+
+- Interpretation: Holding Time, Country, Gender, and Device constant, the odds of premium subscription decreases by a factor of 0.992276 (exp(-0.007754)) for each one-unit increase in Age. The result is not statistically significant (p-value > 0.05). Therefore, we fail to reject the null hypothesis that age is not associated with premium subscription. This does not align with our original hypothesis that "Older people is less likely to register Netflix premium account".
