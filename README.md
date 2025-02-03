@@ -17,3 +17,9 @@ The raw dataset used for the analysis is available at `./data/Microsoft_Stock.cs
 We convert into weekly data for stationary. This dataset has 314 observations of 4 variables. These variables include Week (week), Date (date), Net Price (net_price), and Mean Volume (mean_volume).
 
 ## Result
+
+- Past trading volume is not significantly associated with current net price.
+
+- Past net price is significantly negatively associated with current net price.
+
+- Current net price can be predicted using the past 5 weeks net price.
